@@ -1,0 +1,124 @@
+# ====================================
+# BACKEND - Python & FastAPI
+# ====================================
+
+# Python virtual environments
+backend/venv/
+backend/env/
+backend/.venv/
+backend/ENV/
+
+# Python bytecode
+backend/__pycache__/
+backend/*.pyc
+backend/*.pyo
+backend/*.pyd
+
+# Firebase credentials - CRITICAL - NEVER COMMIT!
+backend/firebase_credentials.json
+backend/serviceAccountKey.json
+backend/*-key.json
+
+# Environment variables
+backend/.env
+backend/.env.local
+backend/.env.production
+
+# IDE
+backend/.vscode/
+backend/.idea/
+backend/*.swp
+backend/*.swo
+
+
+# ====================================
+# FRONTEND - React & Node
+# ====================================
+
+# Dependencies
+frontend/node_modules/
+frontend/.npm
+frontend/.yarn
+
+# Build outputs
+frontend/dist/
+frontend/build/
+frontend/.next/
+frontend/out/
+
+# Environment variables
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+frontend/.env.development
+
+# Logs
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+
+# Coverage
+frontend/coverage/
+
+# IDE
+frontend/.vscode/
+frontend/.idea/
+
+
+# ====================================
+# COMMON - For all projects
+# ====================================
+
+# Root environment files (IMPORTANT)
+.env
+.env.*
+*.env
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temp files
+*.tmp
+*.temp
+
+# Logs
+*.log
+logs/
+
+# Python cache (global safety)
+__pycache__/
+*.pyc
+
+# Secrets - NEVER COMMIT THESE!
+*.pem
+*.key
+*.cert
+*.pfx
+credentials.json
+secrets.json
+
+# Firebase / Cloud credentials (ANYWHERE)
+firebase_credentials.json
+serviceAccountKey.json
+*serviceAccount*.json
+
+
+# ====================================
+# DEMO ASSETS (Optional - keep if you want)
+# ====================================
+# Uncomment if you want to ignore demo images
+# demo_assets/test*.jpg
+# demo_assets/*.png
