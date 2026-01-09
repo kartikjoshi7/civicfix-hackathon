@@ -44,7 +44,7 @@ const Footer = () => {
         </div>
         
         <div className="border-t border-gray-800 mt-8 pt-6 text-center text-gray-400 text-sm">
-          <p>© 2024 CivicFix. All rights reserved.</p>
+          <p>© 2026 CivicFix. All rights reserved.</p>
           <p className="mt-1">Using Google Gemini AI & Google Cloud Platform</p>
         </div>
       </div>
