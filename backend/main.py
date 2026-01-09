@@ -92,23 +92,38 @@ async def analyze_image(file: UploadFile):
         image = Image.open(io.BytesIO(content))
         
         # Use AI if available
+        # Use AI if available
         if client:
             try:
+                # 1. Manually package the "User" message to fix the 400 Error
+                # We use the raw 'content' bytes we read earlier
+                user_message = types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(text="Analyze this city image:"),
+                        types.Part.from_bytes(
+                            data=content, 
+                            mime_type=file.content_type or "image/jpeg"
+                        )
+                    ]
+                )
+
+                # 2. Call Gemini with the structured message
                 response = client.models.generate_content(
-                    model="gemini-2.0-flash",
+                    model="gemini-1.5-flash", # Use 1.5 for stability
                     config=types.GenerateContentConfig(
                         system_instruction=SYSTEM_PROMPT,
                         temperature=0.3
                     ),
-                    contents=["Analyze this city image:", image]
+                    contents=[user_message] # Pass the list containing our structured message
                 )
                 
                 print(f"🤖 AI Response: {response.text[:100]}...")
                 
                 # Extract JSON
                 text = response.text.strip()
-                if "```json" in text:
-                    text = text.replace("```json", "").replace("```", "").strip()
+                if "json" in text:
+                    text = text.replace("json", "").replace("```", "").strip()
                 
                 data = json.loads(text)
                 
@@ -122,15 +137,6 @@ async def analyze_image(file: UploadFile):
                     "danger_reason": "AI failed - needs human review",
                     "recommended_action": "Schedule Repair"
                 }
-        else:
-            # No AI - use test data
-            data = {
-                "issue_detected": True,
-                "type": "AI Disabled",
-                "severity_score": 5,
-                "danger_reason": "AI service not available",
-                "recommended_action": "Schedule Repair"
-            }
         
         # Save to DB
         if db and data.get("issue_detected"):
@@ -357,15 +363,14 @@ async def get_report_by_id(report_id: str):
         print(f"❌ Error fetching report: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching report: {e}")
 
+
 if __name__ == "__main__":
-    port = 9090
+    port = int(os.environ.get("PORT", 9090))  # Render provides PORT
     print(f"\n🚀 CivicFix AI Server")
     print(f"📡 Port: {port}")
     print(f"🤖 AI: {'ENABLED' if client else 'DISABLED'}")
     print(f"🔥 Firebase: {'CONNECTED' if db else 'NOT CONNECTED'}")
-    print(f"📊 Admin Endpoints: ENABLED")
-    print(f"  • GET /admin/reports")
-    print(f"  • GET /admin/stats")
-    print(f"  • PATCH /admin/reports/{{id}}")
     print()
     uvicorn.run(app, host="0.0.0.0", port=port)
+
+    
