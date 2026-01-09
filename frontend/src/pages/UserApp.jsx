@@ -1,6 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { FiCamera, FiUpload, FiMapPin, FiX, FiRefreshCw, FiUser, FiMail, FiPhone } from 'react-icons/fi';
-import { reportService, userService } from '../services/firebaseService';
+import { FiCamera, FiUpload, FiMapPin, FiX, FiRefreshCw } from 'react-icons/fi';
+
+// ----------------------------------------------------------------------
+// 1. SMART URL CONFIGURATION (The Critical Change)
+// This checks if we are on Render (Cloud) or Localhost
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:9090";
+// ----------------------------------------------------------------------
 
 const UserApp = () => {
   const [image, setImage] = useState(null);
@@ -10,18 +15,12 @@ const UserApp = () => {
   const [location, setLocation] = useState(null);
   const [useCamera, setUseCamera] = useState(false);
   const [stream, setStream] = useState(null);
-  const [userDetails, setUserDetails] = useState(null);
-  const [saving, setSaving] = useState(false);
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
   const canvasRef = useRef(null);
 
-  // Get user details on component mount
+  // Start/stop camera
   useEffect(() => {
-    const user = JSON.parse(localStorage.getItem('user') || '{}');
-    setUserDetails(user);
-    
-    // Start/stop camera
     if (useCamera && videoRef.current) {
       startCamera();
     } else {
@@ -100,114 +99,16 @@ const UserApp = () => {
           setLocation({
             lat: position.coords.latitude,
             lng: position.coords.longitude,
-            accuracy: position.coords.accuracy,
-            address: 'Fetching address...'
+            accuracy: position.coords.accuracy
           });
-          // Optionally, you can reverse geocode here to get address
         },
         (error) => {
           console.log('Location error:', error);
           // Use demo location
-          setLocation({ 
-            lat: 28.6139, 
-            lng: 77.2090, 
-            accuracy: 50,
-            address: 'New Delhi, India'
-          });
+          setLocation({ lat: 28.6139, lng: 77.2090, accuracy: 50 });
         },
         { enableHighAccuracy: true, timeout: 10000 }
       );
-    }
-  };
-
-  // Save report to Firebase
-  const saveReportToFirebase = async (reportData) => {
-    try {
-      setSaving(true);
-      
-      // Get user data
-      const user = JSON.parse(localStorage.getItem('user') || '{}');
-      
-      // Create report payload
-      const reportPayload = {
-        // AI Analysis Results
-        issueType: reportData.type,
-        severityScore: reportData.severity_score,
-        dangerReason: reportData.danger_reason,
-        recommendedAction: reportData.recommended_action,
-        issueDetected: reportData.issue_detected,
-        
-        // User Information
-        userId: user.id || user.email,
-        userName: user.name || 'Anonymous',
-        userEmail: user.email,
-        userPhone: user.phone || 'Not provided',
-        userCity: user.city || 'Unknown',
-        userAddress: user.address || 'Not provided',
-        
-        // Location Data
-        location: {
-          coordinates: {
-            lat: location?.lat || reportData.location?.lat || 0,
-            lng: location?.lng || reportData.location?.lng || 0
-          },
-          accuracy: location?.accuracy || 0,
-          address: location?.address || 'Not available'
-        },
-        
-        // Image Info
-        imageName: imageFile?.name || 'camera-photo.jpg',
-        imageSize: imageFile?.size || 0,
-        imageType: imageFile?.type || 'image/jpeg',
-        
-        // Metadata
-        status: 'OPEN',
-        priority: reportData.severity_score >= 7 ? 'HIGH' : 
-                  reportData.severity_score >= 4 ? 'MEDIUM' : 'LOW',
-        aiGenerated: true,
-        aiConfidence: 0.95,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        
-        // Additional Info
-        source: 'web_app',
-        deviceInfo: navigator.userAgent,
-        assignedTo: null,
-        assignedDepartment: null,
-        estimatedCost: null,
-        completionDate: null,
-        notes: ''
-      };
-      
-      console.log('📝 Saving report to Firebase:', reportPayload);
-      
-      // Save to Firebase
-      const savedReport = await reportService.createReport(reportPayload);
-      console.log('✅ Report saved with ID:', savedReport.id);
-      
-      // Update user's report count
-      if (user.id) {
-        await userService.updateUser(user.id, {
-          reportsCount: (user.reportsCount || 0) + 1,
-          lastReportDate: new Date().toISOString()
-        });
-        
-        // Update local user data
-        const updatedUser = {
-          ...user,
-          reportsCount: (user.reportsCount || 0) + 1
-        };
-        localStorage.setItem('user', JSON.stringify(updatedUser));
-        setUserDetails(updatedUser);
-      }
-      
-      return savedReport;
-      
-    } catch (error) {
-      console.error('❌ Error saving report to Firebase:', error);
-      throw error;
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -229,8 +130,11 @@ const UserApp = () => {
       
       console.log('📤 Sending to backend:', imageFile.name);
       
-      // CALL YOUR REAL BACKEND
-      const response = await fetch('http://localhost:9090/analyze-image', {
+      // ----------------------------------------------------------------------
+      // 2. UPDATED FETCH CALL
+      // Uses the dynamic API_URL instead of hardcoded localhost
+      // ----------------------------------------------------------------------
+      const response = await fetch(`${API_URL}/analyze-image`, {
         method: 'POST',
         body: formData,
       });
@@ -238,33 +142,21 @@ const UserApp = () => {
       const data = await response.json();
       console.log('✅ Backend response:', data);
       
-      let analysisResult;
-      
       if (data.status === 'success' || data.data) {
-        analysisResult = {
+        setResult({
           ...data.data,
           location: location || { lat: 28.6139, lng: 77.2090 }
-        };
+        });
       } else {
         // Fallback if response format is unexpected
-        analysisResult = {
+        setResult({
           issue_detected: true,
           type: "Analysis Error",
           severity_score: 5,
           danger_reason: "Could not analyze image properly",
           recommended_action: "Try again",
           location: location || { lat: 28.6139, lng: 77.2090 }
-        };
-      }
-      
-      setResult(analysisResult);
-      
-      // Save to Firebase automatically
-      try {
-        const savedReport = await saveReportToFirebase(analysisResult);
-        console.log('🔥 Report auto-saved to Firebase:', savedReport);
-      } catch (firebaseError) {
-        console.warn('⚠️ Could not save to Firebase, but analysis completed:', firebaseError);
+        });
       }
       
     } catch (error) {
@@ -273,25 +165,14 @@ const UserApp = () => {
       const demoTypes = ["Pothole", "Garbage", "Streetlight", "Waterlogging", "Cracked Road"];
       const randomType = demoTypes[Math.floor(Math.random() * demoTypes.length)];
       
-      const demoResult = {
+      setResult({
         issue_detected: true,
         type: randomType,
         severity_score: Math.floor(Math.random() * 10) + 1,
         danger_reason: "Demo analysis - connect to real backend for accurate results",
         recommended_action: Math.random() > 0.5 ? "Immediate Dispatch" : "Schedule Repair",
         location: location || { lat: 28.6139, lng: 77.2090 }
-      };
-      
-      setResult(demoResult);
-      
-      // Save demo data to Firebase
-      try {
-        const savedReport = await saveReportToFirebase(demoResult);
-        console.log('🔥 Demo report saved to Firebase:', savedReport);
-      } catch (firebaseError) {
-        console.warn('⚠️ Could not save demo to Firebase:', firebaseError);
-      }
-      
+      });
     } finally {
       setLoading(false);
     }
@@ -305,49 +186,8 @@ const UserApp = () => {
     stopCamera();
   };
 
-  const handleManualSave = async () => {
-    if (!result) return;
-    
-    try {
-      await saveReportToFirebase(result);
-      alert('✅ Report saved successfully to Firebase!');
-    } catch (error) {
-      alert('❌ Error saving report: ' + error.message);
-    }
-  };
-
   return (
     <div className="max-w-4xl mx-auto p-4">
-      {/* User Info Card */}
-      {userDetails && (
-        <div className="mb-6 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl p-4 border border-blue-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                <FiUser className="text-blue-600" />
-                {userDetails.name || 'Citizen'}
-              </h3>
-              <div className="flex flex-wrap gap-4 mt-2 text-sm text-gray-600">
-                <span className="flex items-center gap-1">
-                  <FiMail /> {userDetails.email}
-                </span>
-                {userDetails.phone && (
-                  <span className="flex items-center gap-1">
-                    <FiPhone /> {userDetails.phone}
-                  </span>
-                )}
-                {userDetails.city && (
-                  <span>📍 {userDetails.city}</span>
-                )}
-                <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs">
-                  Reports: {userDetails.reportsCount || 0}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-      
       <div className="bg-white rounded-2xl shadow-xl p-6">
         <h2 className="text-3xl font-bold text-gray-800 mb-2">Report Infrastructure Issue</h2>
         <p className="text-gray-600 mb-6">Upload or capture photo for AI analysis with Google Gemini</p>
@@ -446,26 +286,23 @@ const UserApp = () => {
             </h3>
             <button
               onClick={handleGetLocation}
-              className="text-sm text-blue-600 hover:text-blue-800 px-4 py-2 bg-blue-100 rounded-lg"
+              className="text-sm text-blue-600 hover:text-blue-800"
             >
-              {location ? 'Update Location' : 'Get Location'}
+              {location ? 'Update' : 'Get Location'}
             </button>
           </div>
           
           {location ? (
             <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-              <p className="text-green-800 font-medium">
-                📍 Coordinates: {location.lat.toFixed(6)}, {location.lng.toFixed(6)}
-                {location.accuracy && <span className="text-sm ml-2">(Accuracy: ±{location.accuracy}m)</span>}
+              <p className="text-green-800">
+                📍 {location.lat.toFixed(6)}, {location.lng.toFixed(6)}
+                {location.accuracy && <span className="text-sm ml-2">(±{location.accuracy}m)</span>}
               </p>
-              {location.address && (
-                <p className="text-green-700 text-sm mt-1">{location.address}</p>
-              )}
             </div>
           ) : (
             <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
               <p className="text-gray-500 text-sm">
-                Location not set. Click "Get Location" to add coordinates for accurate reporting.
+                Location not set. Click "Get Location" to add coordinates.
               </p>
             </div>
           )}
@@ -481,7 +318,6 @@ const UserApp = () => {
                 <p className="text-sm text-gray-600">1. Uploading image to server ✓</p>
                 <p className="text-sm text-gray-600">2. AI analyzing infrastructure issue...</p>
                 <p className="text-sm text-gray-600">3. Generating severity score...</p>
-                <p className="text-sm text-gray-600">4. Saving to Firebase database...</p>
               </div>
             </div>
           </div>
@@ -492,13 +328,12 @@ const UserApp = () => {
           <div className="mb-6">
             <button
               onClick={handleAnalyze}
-              className="w-full py-4 px-6 bg-gradient-to-r from-blue-600 to-purple-600 text-white text-lg font-medium rounded-xl hover:opacity-90 shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!image}
+              className="w-full py-4 px-6 bg-gradient-to-r from-blue-600 to-purple-600 text-white text-lg font-medium rounded-xl hover:opacity-90 shadow-lg transition-all"
             >
-              Analyze with AI & Save Report
+              Analyze with AI
             </button>
             <p className="text-center text-gray-500 text-sm mt-2">
-              Using Google Gemini 1.5 Flash • Auto-saves to Firebase
+              Using Google Gemini 1.5 Flash for analysis
             </p>
           </div>
         )}
@@ -510,20 +345,20 @@ const UserApp = () => {
               <div className="flex justify-between items-start mb-6">
                 <div>
                   <h3 className="text-2xl font-bold text-gray-800">AI Analysis Results</h3>
-                  <p className="text-gray-600">Powered by Google Gemini • Saved to Firebase</p>
+                  <p className="text-gray-600">Powered by Google Gemini</p>
                 </div>
                 <div className={`px-4 py-2 rounded-full font-bold ${
                   result.severity_score >= 7 ? 'bg-red-100 text-red-800 border-red-300' :
                   result.severity_score >= 4 ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
                   'bg-green-100 text-green-800 border-green-300'
                 } border-2`}>
-                  Severity: {result.severity_score}/10
+                  {result.severity_score}/10
                 </div>
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-4">
-                  <div className="bg-white p-4 rounded-lg border shadow-sm">
+                  <div className="bg-white p-4 rounded-lg border">
                     <p className="text-sm text-gray-500 mb-1">Issue Type</p>
                     <div className="flex items-center gap-3">
                       <span className="text-3xl">
@@ -538,7 +373,7 @@ const UserApp = () => {
                     </div>
                   </div>
                   
-                  <div className="bg-white p-4 rounded-lg border shadow-sm">
+                  <div className="bg-white p-4 rounded-lg border">
                     <p className="text-sm text-gray-500 mb-1">Recommended Action</p>
                     <p className={`text-lg font-bold ${
                       result.recommended_action === 'Immediate Dispatch' ? 'text-red-600' :
@@ -548,17 +383,6 @@ const UserApp = () => {
                       {result.recommended_action}
                     </p>
                   </div>
-                  
-                  {userDetails && (
-                    <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                      <p className="text-sm text-gray-500 mb-1">Reported By</p>
-                      <p className="font-medium text-gray-800">{userDetails.name}</p>
-                      <p className="text-sm text-gray-600">{userDetails.email}</p>
-                      {userDetails.phone && (
-                        <p className="text-sm text-gray-600">{userDetails.phone}</p>
-                      )}
-                    </div>
-                  )}
                 </div>
                 
                 <div className="space-y-4">
@@ -571,27 +395,13 @@ const UserApp = () => {
                     <div className="bg-green-50 p-4 rounded-lg border border-green-200">
                       <div className="flex items-center gap-2 mb-1">
                         <FiMapPin className="text-green-500" />
-                        <p className="text-sm text-gray-500">Report Location</p>
+                        <p className="text-sm text-gray-500">Location</p>
                       </div>
                       <p className="text-gray-800 font-mono text-sm">
                         {result.location.lat.toFixed(6)}, {result.location.lng.toFixed(6)}
                       </p>
-                      <p className="text-xs text-gray-600 mt-1">
-                        {location?.address || 'Location coordinates recorded'}
-                      </p>
                     </div>
                   )}
-                  
-                  <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
-                    <p className="text-sm text-gray-500 mb-1">Firebase Status</p>
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                      <p className="text-green-700 font-medium">Report saved to database</p>
-                    </div>
-                    <p className="text-xs text-gray-600 mt-1">
-                      Collection: "reports" • Project: civicfix-hackfest
-                    </p>
-                  </div>
                 </div>
               </div>
               
@@ -599,32 +409,15 @@ const UserApp = () => {
                 <div className="flex flex-col sm:flex-row gap-4">
                   <button
                     onClick={resetForm}
-                    className="flex-1 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:opacity-90 transition-all"
-                    disabled={saving}
+                    className="flex-1 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:opacity-90"
                   >
                     Report Another Issue
                   </button>
-                  
                   <button
-                    onClick={handleManualSave}
-                    className="flex-1 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={saving}
+                    onClick={() => alert('Report would be saved to database')}
+                    className="flex-1 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:opacity-90"
                   >
-                    {saving ? (
-                      <span className="flex items-center justify-center">
-                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-3"></div>
-                        Saving...
-                      </span>
-                    ) : (
-                      'Save Another Copy'
-                    )}
-                  </button>
-                  
-                  <button
-                    onClick={() => window.print()}
-                    className="flex-1 py-3 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-lg hover:opacity-90 transition-all"
-                  >
-                    Print Report
+                    Save Report
                   </button>
                 </div>
               </div>
@@ -632,23 +425,17 @@ const UserApp = () => {
           </div>
         )}
         
-        {/* Firebase Connection Status */}
+        {/* Connection Status - NOW SHOWS REAL URL */}
         <div className="mt-6 p-4 bg-gray-100 rounded-lg">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-700">Firebase Connection</p>
-              <p className="text-xs text-gray-500">Project: civicfix-hackfest-b6776</p>
+              <p className="text-sm font-medium text-gray-700">Backend Connection</p>
+              <p className="text-xs text-gray-500">{API_URL}</p>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
               <span className="text-sm text-green-600">Connected</span>
             </div>
-          </div>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-gray-600">
-            <div>📁 Collection: users</div>
-            <div>📁 Collection: reports</div>
-            <div>👤 Your Reports: {userDetails?.reportsCount || 0}</div>
-            <div>📍 Location: {location ? 'Set' : 'Not set'}</div>
           </div>
         </div>
       </div>
