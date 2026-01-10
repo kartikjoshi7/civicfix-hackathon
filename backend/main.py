@@ -189,7 +189,9 @@ async def get_all_reports(
             query = query.where("type", "==", issue_type)
         
         # Execute query
-        docs = query.limit(limit).order_by("timestamp", direction=firestore.Query.DESCENDING).stream()
+        query = query.order_by("timestamp", direction=firestore.Query.DESCENDING)
+        docs = query.limit(limit).stream()
+
         
         reports = []
         for doc in docs:
