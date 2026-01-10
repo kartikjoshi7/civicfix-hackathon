@@ -110,7 +110,7 @@ async def analyze_image(file: UploadFile):
 
                 # 2. Call Gemini with the structured message
                 response = client.models.generate_content(
-                    model="gemini-1.5-flash", # Use 1.5 for stability
+                    model="gemini-2.0-flash", # Use 1.5 for stability
                     config=types.GenerateContentConfig(
                         system_instruction=SYSTEM_PROMPT,
                         temperature=0.3
