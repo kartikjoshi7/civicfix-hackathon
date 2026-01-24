@@ -1,344 +1,256 @@
-import React, { useState, useEffect } from 'react'
-import { getAllReports, getDashboardStats, updateReportStatus } from '../services/api'
-import { FiRefreshCw, FiFilter, FiDownload, FiAlertTriangle } from 'react-icons/fi'
+import React, { useState, useEffect } from 'react';
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { db } from '../firebase/config';
+import { FiFilter, FiSearch, FiCheckCircle, FiTrash2, FiMapPin, FiCalendar, FiAlertTriangle, FiLoader, FiXCircle } from 'react-icons/fi';
 
 const AdminDashboard = () => {
-  const [reports, setReports] = useState([])
-  const [stats, setStats] = useState({
-    total_reports: 0,
-    today_reports: 0,
-    reports_by_type: {},
-    reports_by_severity: { high: 0, medium: 0, low: 0 },
-    avg_severity_score: 0
-  })
-  const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState({})
-  const [selectedStatus, setSelectedStatus] = useState('')
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState('ALL'); // ALL, OPEN, HIGH, RESOLVED
+  const [searchTerm, setSearchTerm] = useState('');
 
+  // --- 1. REAL-TIME DATA FETCHING (Direct from Firebase) ---
   useEffect(() => {
-    fetchData()
-  }, [filters])
-
-  const fetchData = async () => {
-    setLoading(true)
-    try {
-      const [reportsData, statsData] = await Promise.all([
-        getAllReports(filters),
-        getDashboardStats()
-      ])
-      
-      setReports(reportsData.reports || [])
-      setStats(statsData)
-    } catch (error) {
-      console.error('Error fetching data:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleStatusUpdate = async (reportId, newStatus) => {
-    try {
-      await updateReportStatus(reportId, newStatus)
-      // Refresh data
-      fetchData()
-    } catch (error) {
-      console.error('Error updating status:', error)
-    }
-  }
-
-  const handleFilterChange = (status) => {
-    setSelectedStatus(status)
-    setFilters(status ? { status } : {})
-  }
-
-  const getStatusColor = (status) => {
-    switch(status) {
-      case 'OPEN': return 'bg-red-100 text-red-800 border-red-300'
-      case 'IN_PROGRESS': return 'bg-yellow-100 text-yellow-800 border-yellow-300'
-      case 'RESOLVED': return 'bg-green-100 text-green-800 border-green-300'
-      case 'REJECTED': return 'bg-gray-100 text-gray-800 border-gray-300'
-      default: return 'bg-gray-100 text-gray-800 border-gray-300'
-    }
-  }
-
-  const getSeverityColor = (score) => {
-    if (score >= 7) return 'bg-red-100 text-red-800 border-red-300'
-    if (score >= 4) return 'bg-yellow-100 text-yellow-800 border-yellow-300'
-    return 'bg-green-100 text-green-800 border-green-300'
-  }
-
-  const formatDate = (timestamp) => {
-    if (!timestamp) return 'N/A'
-    const date = new Date(timestamp)
-    return date.toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  }
-
-  const exportToCSV = () => {
-    // Simple CSV export
-    const headers = ['Type', 'Severity', 'Status', 'Location', 'Date']
-    const csvData = reports.map(report => [
-      report.type,
-      report.severity_score,
-      report.status,
-      report.location || 'N/A',
-      formatDate(report.timestamp)
-    ])
+    // This connects directly to your database, bypassing the local backend
+    const q = query(collection(db, 'reports'), orderBy('createdAt', 'desc'));
     
-    const csvContent = [
-      headers.join(','),
-      ...csvData.map(row => row.join(','))
-    ].join('\n')
-    
-    const blob = new Blob([csvContent], { type: 'text/csv' })
-    const url = window.URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `civicfix-reports-${new Date().toISOString().split('T')[0]}.csv`
-    a.click()
+    // onSnapshot listens for changes instantly
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const reportsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setReports(reportsData);
+      setLoading(false);
+    }, (error) => {
+      console.error("Error fetching reports:", error);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // --- 2. ACTIONS (Resolve / Delete) ---
+  const updateStatus = async (id, newStatus) => {
+    try {
+      const reportRef = doc(db, 'reports', id);
+      await updateDoc(reportRef, { status: newStatus });
+    } catch (error) {
+      alert("Failed to update status");
+    }
+  };
+
+  const deleteReport = async (id) => {
+    if (window.confirm("Are you sure you want to delete this report? This cannot be undone.")) {
+      try {
+        await deleteDoc(doc(db, 'reports', id));
+      } catch (error) {
+        console.error("Error deleting:", error);
+      }
+    }
+  };
+
+  // --- 3. FILTERING & SORTING LOGIC ---
+  const getFilteredReports = () => {
+    return reports.filter(report => {
+      // 1. Status Filter
+      if (filter === 'OPEN' && report.status !== 'OPEN') return false;
+      if (filter === 'RESOLVED' && report.status !== 'RESOLVED') return false;
+      if (filter === 'HIGH' && report.severityScore < 7) return false;
+
+      // 2. Search Filter
+      if (searchTerm) {
+        const term = searchTerm.toLowerCase();
+        return (
+          report.type?.toLowerCase().includes(term) ||
+          report.location?.address?.toLowerCase().includes(term) ||
+          report.id.toLowerCase().includes(term)
+        );
+      }
+      return true;
+    }).sort((a, b) => {
+      // 3. Priority Sort: Show High Severity first if viewing All or Open
+      if (filter === 'ALL' || filter === 'OPEN') {
+        // If one is OPEN and other is not, prioritize OPEN
+        if (a.status === 'OPEN' && b.status !== 'OPEN') return -1;
+        if (a.status !== 'OPEN' && b.status === 'OPEN') return 1;
+        // Then sort by Severity (Highest first)
+        return (b.severityScore || 0) - (a.severityScore || 0);
+      }
+      return 0; // Default is time-sorted (from Firestore query)
+    });
+  };
+
+  const filteredReports = getFilteredReports();
+
+  // Helper for Badge Colors
+  const getSeverityBadge = (score) => {
+    if (score >= 8) return 'bg-red-100 text-red-800 border-red-200';
+    if (score >= 5) return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+    return 'bg-green-100 text-green-800 border-green-200';
+  };
+
+  const getStatusBadge = (status) => {
+    return status === 'OPEN' 
+      ? 'bg-blue-100 text-blue-700 border-blue-200' 
+      : 'bg-gray-100 text-gray-600 border-gray-200';
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-96">
+        <div className="flex flex-col items-center gap-3">
+          <FiLoader className="animate-spin text-4xl text-blue-600" />
+          <p className="text-gray-500 font-medium">Loading Dashboard Data...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="max-w-7xl mx-auto">
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h2 className="text-3xl font-bold text-gray-800">Admin Dashboard</h2>
-          <p className="text-gray-600">Monitor and manage infrastructure reports</p>
-        </div>
-        <button
-          onClick={fetchData}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
-        >
-          <FiRefreshCw className={loading ? 'animate-spin' : ''} />
-          Refresh
-        </button>
-      </div>
+    <div className="space-y-8">
       
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <div className="bg-gradient-to-br from-blue-50 to-white rounded-xl shadow-lg p-6 border border-blue-100">
-          <div className="text-3xl font-bold text-blue-700 mb-2">{stats.total_reports}</div>
-          <p className="text-gray-600 text-sm">Total Reports</p>
+      {/* 1. STATS OVERVIEW CARDS */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+          <p className="text-gray-400 text-xs uppercase font-bold tracking-wider">Total Reports</p>
+          <p className="text-3xl font-black text-gray-800 mt-1">{reports.length}</p>
         </div>
-        
-        <div className="bg-gradient-to-br from-red-50 to-white rounded-xl shadow-lg p-6 border border-red-100">
-          <div className="text-3xl font-bold text-red-700 mb-2">{stats.today_reports}</div>
-          <p className="text-gray-600 text-sm">Today's Reports</p>
-        </div>
-        
-        <div className="bg-gradient-to-br from-yellow-50 to-white rounded-xl shadow-lg p-6 border border-yellow-100">
-          <div className="text-3xl font-bold text-yellow-700 mb-2">{stats.reports_by_severity.high || 0}</div>
-          <p className="text-gray-600 text-sm">High Priority</p>
-        </div>
-        
-        <div className="bg-gradient-to-br from-purple-50 to-white rounded-xl shadow-lg p-6 border border-purple-100">
-          <div className="text-3xl font-bold text-purple-700 mb-2">{stats.avg_severity_score.toFixed(1)}</div>
-          <p className="text-gray-600 text-sm">Avg. Severity</p>
-        </div>
-      </div>
-      
-      {/* Filters */}
-      <div className="bg-white rounded-xl shadow p-6 mb-8">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-800 mb-2">Filters</h3>
-            <div className="flex flex-wrap gap-2">
-              {['', 'OPEN', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'].map(status => (
-                <button
-                  key={status}
-                  onClick={() => handleFilterChange(status)}
-                  className={`px-4 py-2 rounded-lg ${selectedStatus === status 
-                    ? 'bg-blue-600 text-white' 
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {status || 'All Status'}
-                </button>
-              ))}
+        <div className="bg-red-50 p-5 rounded-2xl shadow-sm border border-red-100">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-red-400 text-xs uppercase font-bold tracking-wider">Critical Issues</p>
+              <p className="text-3xl font-black text-red-600 mt-1">
+                {reports.filter(r => r.severityScore >= 8 && r.status === 'OPEN').length}
+              </p>
             </div>
+            <FiAlertTriangle className="text-red-300 text-2xl" />
           </div>
-          <button
-            onClick={exportToCSV}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
-          >
-            <FiDownload />
-            Export CSV
-          </button>
+        </div>
+        <div className="bg-blue-50 p-5 rounded-2xl shadow-sm border border-blue-100">
+          <p className="text-blue-400 text-xs uppercase font-bold tracking-wider">Open Tickets</p>
+          <p className="text-3xl font-black text-blue-600 mt-1">
+            {reports.filter(r => r.status === 'OPEN').length}
+          </p>
+        </div>
+        <div className="bg-green-50 p-5 rounded-2xl shadow-sm border border-green-100">
+          <p className="text-green-500 text-xs uppercase font-bold tracking-wider">Resolved</p>
+          <p className="text-3xl font-black text-green-600 mt-1">
+            {reports.filter(r => r.status === 'RESOLVED').length}
+          </p>
         </div>
       </div>
-      
-      {/* Reports Table */}
-      <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
-        <div className="p-6 border-b border-gray-200">
-          <div className="flex justify-between items-center">
-            <h3 className="text-xl font-bold text-gray-800">
-              Reports ({reports.length})
-            </h3>
-            <div className="text-sm text-gray-500">
-              {loading ? 'Loading...' : `Last updated: ${new Date().toLocaleTimeString()}`}
-            </div>
-          </div>
+
+      {/* 2. CONTROLS BAR */}
+      <div className="flex flex-col md:flex-row justify-between gap-4 bg-white p-2 rounded-xl shadow-sm border border-gray-100">
+        <div className="flex gap-1 overflow-x-auto p-1">
+          {['ALL', 'OPEN', 'HIGH', 'RESOLVED'].map(f => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-5 py-2.5 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
+                filter === f 
+                  ? 'bg-gray-900 text-white shadow-md' 
+                  : 'bg-transparent text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              {f === 'HIGH' ? '🔥 High Priority' : f === 'ALL' ? 'All Reports' : f}
+            </button>
+          ))}
         </div>
-        
-        {loading ? (
-          <div className="p-12 text-center">
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
-            <p className="mt-4 text-gray-600">Loading reports from database...</p>
-          </div>
-        ) : reports.length === 0 ? (
-          <div className="p-12 text-center">
-            <FiAlertTriangle className="inline-block text-4xl text-yellow-500 mb-4" />
-            <p className="text-gray-600">No reports found. Try adjusting filters.</p>
+        <div className="relative p-1">
+          <FiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Search city, issue type..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full md:w-64"
+          />
+        </div>
+      </div>
+
+      {/* 3. REPORTS LIST */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        {filteredReports.length === 0 ? (
+          <div className="text-center py-20">
+            <div className="bg-gray-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+              <FiFilter className="text-gray-300 text-2xl" />
+            </div>
+            <p className="text-gray-500 font-medium">No reports found matching your filters.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="py-3 px-6 text-left text-sm font-medium text-gray-500">Issue Type</th>
-                  <th className="py-3 px-6 text-left text-sm font-medium text-gray-500">Severity</th>
-                  <th className="py-3 px-6 text-left text-sm font-medium text-gray-500">Status</th>
-                  <th className="py-3 px-6 text-left text-sm font-medium text-gray-500">Reported</th>
-                  <th className="py-3 px-6 text-left text-sm font-medium text-gray-500">Risk Assessment</th>
-                  <th className="py-3 px-6 text-left text-sm font-medium text-gray-500">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {reports.map((report) => (
-                  <tr key={report.id} className="hover:bg-gray-50">
-                    <td className="py-4 px-6">
-                      <div className="flex items-center">
-                        <div className="text-2xl mr-3">
-                          {report.type === 'Pothole' && '🕳️'}
-                          {report.type === 'Garbage' && '🗑️'}
-                          {report.type === 'Streetlight' && '💡'}
-                          {report.type === 'Waterlogging' && '🌊'}
-                          {!['Pothole', 'Garbage', 'Streetlight', 'Waterlogging'].includes(report.type) && '⚠️'}
-                        </div>
-                        <div>
-                          <p className="font-medium text-gray-900">{report.type}</p>
-                          <p className="text-xs text-gray-500">{report.id?.substring(0, 8)}...</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="py-4 px-6">
-                      <span className={`px-3 py-1 rounded-full text-sm font-medium ${getSeverityColor(report.severity_score)}`}>
-                        {report.severity_score}/10
-                      </span>
-                    </td>
-                    <td className="py-4 px-6">
-                      <select
-                        value={report.status || 'OPEN'}
-                        onChange={(e) => handleStatusUpdate(report.id, e.target.value)}
-                        className={`px-3 py-1 rounded-lg text-sm font-medium ${getStatusColor(report.status)} border-0 focus:ring-2 focus:ring-blue-500`}
-                      >
-                        <option value="OPEN">OPEN</option>
-                        <option value="IN_PROGRESS">IN PROGRESS</option>
-                        <option value="RESOLVED">RESOLVED</option>
-                        <option value="REJECTED">REJECTED</option>
-                      </select>
-                    </td>
-                    <td className="py-4 px-6 text-sm text-gray-500">
-                      {formatDate(report.timestamp)}
-                    </td>
-                    <td className="py-4 px-6">
-                      <p className="text-sm text-gray-700 max-w-xs truncate">
-                        {report.danger_reason || 'No details'}
-                      </p>
-                    </td>
-                    <td className="py-4 px-6">
-                      <button
-                        onClick={() => alert(`Report ID: ${report.id}\nFull details would show here`)}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-                      >
-                        View
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-      
-      {/* Severity Distribution */}
-      <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-gradient-to-br from-blue-50 to-white p-6 rounded-xl border border-blue-200">
-          <h4 className="font-bold text-blue-800 mb-4">Severity Distribution</h4>
-          <div className="space-y-3">
-            <div>
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-red-600">High (7-10)</span>
-                <span>{stats.reports_by_severity.high || 0}</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div 
-                  className="bg-red-500 h-2 rounded-full" 
-                  style={{ width: `${((stats.reports_by_severity.high || 0) / stats.total_reports) * 100}%` }}
-                ></div>
-              </div>
-            </div>
-            <div>
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-yellow-600">Medium (4-6)</span>
-                <span>{stats.reports_by_severity.medium || 0}</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div 
-                  className="bg-yellow-500 h-2 rounded-full" 
-                  style={{ width: `${((stats.reports_by_severity.medium || 0) / stats.total_reports) * 100}%` }}
-                ></div>
-              </div>
-            </div>
-            <div>
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-green-600">Low (1-3)</span>
-                <span>{stats.reports_by_severity.low || 0}</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div 
-                  className="bg-green-500 h-2 rounded-full" 
-                  style={{ width: `${((stats.reports_by_severity.low || 0) / stats.total_reports) * 100}%` }}
-                ></div>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div className="bg-gradient-to-br from-purple-50 to-white p-6 rounded-xl border border-purple-200">
-          <h4 className="font-bold text-purple-800 mb-4">Issue Types</h4>
-          <div className="space-y-2">
-            {Object.entries(stats.reports_by_type || {}).map(([type, count]) => (
-              <div key={type} className="flex justify-between items-center">
-                <span className="text-sm text-gray-700">{type}</span>
-                <span className="font-medium">{count}</span>
+          <div className="divide-y divide-gray-100">
+            {filteredReports.map((report) => (
+              <div key={report.id} className="p-6 hover:bg-gray-50 transition-colors flex flex-col md:flex-row gap-6">
+                
+                {/* Image Placeholder / Actual Image */}
+                <div className="w-full md:w-48 h-32 bg-gray-200 rounded-xl flex-shrink-0 overflow-hidden">
+                   {/* This placeholder shows up if no image is stored. 
+                       If you have image URLs in your reports, change the div below to <img src={report.imageUrl} /> */}
+                   <div className="w-full h-full flex items-center justify-center text-gray-400 bg-gray-100 border border-gray-200">
+                     <FiCheckCircle size={24} />
+                   </div>
+                </div>
+
+                {/* Content */}
+                <div className="flex-grow">
+                  <div className="flex flex-wrap items-center gap-3 mb-2">
+                    <span className={`px-2.5 py-0.5 rounded text-xs font-bold border ${getSeverityBadge(report.severityScore)}`}>
+                      Severity: {report.severityScore}/10
+                    </span>
+                    <span className={`px-2.5 py-0.5 rounded text-xs font-bold border ${getStatusBadge(report.status)}`}>
+                      {report.status}
+                    </span>
+                    <span className="text-xs text-gray-400 font-medium flex items-center gap-1">
+                      <FiCalendar /> {report.createdAt ? new Date(report.createdAt).toLocaleDateString() : 'Unknown Date'}
+                    </span>
+                  </div>
+
+                  <h3 className="text-lg font-bold text-gray-900 mb-1">{report.type}</h3>
+                  
+                  <div className="flex items-start gap-2 text-sm text-gray-500 mb-4">
+                    <FiMapPin className="mt-0.5 flex-shrink-0" />
+                    <span className="line-clamp-1">{report.location?.address || 'Location data unavailable'}</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-3 rounded-xl border border-gray-100 text-sm">
+                    <div>
+                      <p className="text-[10px] uppercase font-bold text-gray-400 mb-1">Risk Assessment</p>
+                      <p className="text-gray-700 leading-snug">{report.dangerReason || "Analysis pending..."}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase font-bold text-gray-400 mb-1">Govt Action Plan</p>
+                      <p className="text-blue-700 font-semibold leading-snug">{report.recommendedAction || "Under review"}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex md:flex-col justify-end gap-2 md:border-l md:border-gray-100 md:pl-6">
+                  {report.status !== 'RESOLVED' && (
+                    <button 
+                      onClick={() => updateStatus(report.id, 'RESOLVED')}
+                      className="flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm transition-all shadow-sm hover:shadow-md"
+                    >
+                      <FiCheckCircle /> Resolve
+                    </button>
+                  )}
+                  <button 
+                    onClick={() => deleteReport(report.id)}
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-white text-red-600 border border-red-200 rounded-lg hover:bg-red-50 font-bold text-sm transition-colors"
+                  >
+                    <FiTrash2 /> Delete
+                  </button>
+                </div>
+
               </div>
             ))}
           </div>
-        </div>
-        
-        <div className="bg-gradient-to-br from-green-50 to-white p-6 rounded-xl border border-green-200">
-          <h4 className="font-bold text-green-800 mb-4">Quick Actions</h4>
-          <div className="space-y-3">
-            <button className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
-              Send Priority Alert
-            </button>
-            <button className="w-full px-4 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm">
-              Generate Monthly Report
-            </button>
-            <button className="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm">
-              AI Settings
-            </button>
-          </div>
-        </div>
+        )}
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default AdminDashboard
+export default AdminDashboard;
