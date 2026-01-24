@@ -110,7 +110,7 @@ async def analyze_image(file: UploadFile):
 
                 # 2. Call Gemini with the structured message
                 response = client.models.generate_content(
-                    model="gemini-1.5-flash", # Use 1.5 for stability
+                    model="gemini-2.0-flash", # Use 1.5 for stability
                     config=types.GenerateContentConfig(
                         system_instruction=SYSTEM_PROMPT,
                         temperature=0.3
@@ -189,7 +189,8 @@ async def get_all_reports(
             query = query.where("type", "==", issue_type)
         
         # Execute query
-        docs = query.limit(limit).order_by("timestamp", direction=firestore.Query.DESCENDING).stream()
+        query = query.order_by("timestamp", direction=firestore.Query.DESCENDING)
+        docs = query.limit(limit).stream()
         
         reports = []
         for doc in docs:
@@ -372,5 +373,3 @@ if __name__ == "__main__":
     print(f"🔥 Firebase: {'CONNECTED' if db else 'NOT CONNECTED'}")
     print()
     uvicorn.run(app, host="0.0.0.0", port=port)
-
-    

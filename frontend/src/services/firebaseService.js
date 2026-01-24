@@ -2,40 +2,38 @@ import { db } from '../firebase/config';
 import { 
   collection, addDoc, getDocs, getDoc, 
   updateDoc, deleteDoc, doc, query, 
-  where, orderBy, limit 
+  where, orderBy, increment // ⭐ IMPORTED INCREMENT
 } from 'firebase/firestore';
 
 // User Management Functions
 export const userService = {
   // Create new user
   async createUser(userData) {
-  try {
-    console.log('🔥 Attempting to create user in Firebase:', userData.email);
-    
-    const usersRef = collection(db, 'users');
-    const docRef = await addDoc(usersRef, {
-      ...userData,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      status: 'active',
-      reportsCount: 0,
-      lastLogin: null
-    });
-    
-    console.log('✅ User created with ID:', docRef.id);
-    return { id: docRef.id, ...userData };
-  } catch (error) {
-    console.error('❌ Firebase Error creating user:', error);
-    
-    // Check if it's a permissions error
-    if (error.code === 'permission-denied') {
-      console.error('⚠️ Firebase permission denied. Check Firestore rules.');
-      throw new Error('Database permissions issue. Please check Firestore rules.');
+    try {
+      console.log('🔥 Attempting to create user in Firebase:', userData.email);
+      
+      const usersRef = collection(db, 'users');
+      // We use setDoc in Register.jsx, but if using addDoc here, ensure ID handling matches
+      const docRef = await addDoc(usersRef, {
+        ...userData,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        status: 'active',
+        reportsCount: 0,
+        lastLogin: null
+      });
+      
+      console.log('✅ User created with ID:', docRef.id);
+      return { id: docRef.id, ...userData };
+    } catch (error) {
+      console.error('❌ Firebase Error creating user:', error);
+      if (error.code === 'permission-denied') {
+        throw new Error('Database permissions issue. Please check Firestore rules.');
+      }
+      throw error;
     }
-    
-    throw error;
-  }
-},
+  },
+
   // Get user by email
   async getUserByEmail(email) {
     try {
@@ -100,7 +98,6 @@ export const userService = {
   // Get user statistics
   async getUserStats(userId) {
     try {
-      // Get user's reports count
       const reportsRef = collection(db, 'reports');
       const q = query(reportsRef, where("userId", "==", userId));
       const querySnapshot = await getDocs(q);
@@ -121,6 +118,7 @@ export const userService = {
 export const reportService = {
   async createReport(reportData) {
     try {
+      // 1. Create the Report
       const reportsRef = collection(db, 'reports');
       const docRef = await addDoc(reportsRef, {
         ...reportData,
@@ -129,6 +127,23 @@ export const reportService = {
         status: 'OPEN'
       });
       console.log('✅ Report created with ID:', docRef.id);
+
+      // 2. ⭐ ATOMICALLY INCREMENT USER REPORT COUNT ⭐
+      // This ensures the count goes up by 1 in the database, regardless of what the frontend says.
+      if (reportData.userId) {
+        try {
+          const userRef = doc(db, 'users', reportData.userId);
+          await updateDoc(userRef, {
+            reportsCount: increment(1), // Magic fix: Atomic +1
+            lastReportDate: new Date().toISOString()
+          });
+          console.log('✅ User report count auto-incremented in DB');
+        } catch (userError) {
+          console.error('⚠️ Failed to increment user count:', userError);
+          // Don't fail the whole report creation if just the counter fails
+        }
+      }
+
       return { id: docRef.id, ...reportData };
     } catch (error) {
       console.error('❌ Error creating report:', error);
@@ -140,7 +155,6 @@ export const reportService = {
     try {
       let reportsRef = collection(db, 'reports');
       
-      // Apply filters if provided
       let q = reportsRef;
       if (filters.status) {
         q = query(q, where("status", "==", filters.status));
@@ -262,21 +276,17 @@ export const reportService = {
   }
 };
 
-// Dashboard Statistics
 export const dashboardService = {
   async getDashboardStats() {
     try {
-      // Get users count
       const usersRef = collection(db, 'users');
       const usersSnapshot = await getDocs(usersRef);
       const totalUsers = usersSnapshot.size;
       
-      // Get reports count and stats
       const reportsRef = collection(db, 'reports');
       const reportsSnapshot = await getDocs(reportsRef);
       const reports = reportsSnapshot.docs.map(doc => doc.data());
       
-      // Today's reports
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const todayReports = reports.filter(report => {
@@ -284,7 +294,6 @@ export const dashboardService = {
         return reportDate >= today;
       });
       
-      // Calculate severity distribution
       const severityCounts = { high: 0, medium: 0, low: 0 };
       reports.forEach(report => {
         const score = report.severityScore || 0;
@@ -293,7 +302,6 @@ export const dashboardService = {
         else severityCounts.low++;
       });
       
-      // Calculate average severity
       const totalSeverity = reports.reduce((sum, report) => sum + (report.severityScore || 0), 0);
       const avgSeverity = reports.length > 0 ? (totalSeverity / reports.length) : 0;
       
@@ -303,8 +311,6 @@ export const dashboardService = {
         todayReports: todayReports.length,
         reportsBySeverity: severityCounts,
         avgSeverityScore: parseFloat(avgSeverity.toFixed(1)),
-        
-        // Reports by type
         reportsByType: reports.reduce((acc, report) => {
           const type = report.issueType || 'Unknown';
           acc[type] = (acc[type] || 0) + 1;
@@ -318,7 +324,6 @@ export const dashboardService = {
   }
 };
 
-// Export all services
 export default {
   userService,
   reportService,

@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { db } from '../firebase/config';
-import { collection, query, where, getDocs, addDoc } from 'firebase/firestore';
+import { auth, db } from '../firebase/config'; // Make sure 'auth' is exported from config
+import { signInWithEmailAndPassword } from 'firebase/auth'; // Import Auth function
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { 
-  FiMail, FiLock, FiAlertCircle, FiCheck,
-  FiHome, FiShield
+  FiMail, FiLock, FiAlertCircle, FiCheck
 } from 'react-icons/fi';
 
 function Login() {
@@ -16,114 +16,70 @@ function Login() {
   const [success, setSuccess] = useState('');
 
   const handleSubmit = async (e) => {
-  e.preventDefault();
-  setError('');
-  setSuccess('');
-  setLoading(true);
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+    setLoading(true);
 
-  try {
-    // Query Firestore for user
-    const usersRef = collection(db, 'users');
-    const q = query(usersRef, where("email", "==", email));
-    const querySnapshot = await getDocs(q);
+    try {
+      // ---------------------------------------------------------
+      // 1. AUTHENTICATE WITH FIREBASE AUTH
+      // This checks the email/password against the registered user
+      // ---------------------------------------------------------
+      await signInWithEmailAndPassword(auth, email, password);
 
-    if (querySnapshot.empty) {
-      // If no user found, check if it's a demo admin
-      if (email === 'admin@city.gov') {
-        // Auto-create admin account for demo
-        const newAdmin = await addDoc(usersRef, {
-          name: 'City Administrator',
-          email: 'admin@city.gov',
-          phone: '+911234567890',
-          city: 'City Administration',
-          role: 'admin',
-          userType: 'city_official',
-          createdAt: new Date().toISOString(),
-          status: 'active',
-          reportsCount: 0
-        });
-        
-        const adminUser = {
-          id: newAdmin.id,
-          name: 'City Administrator',
-          email: 'admin@city.gov',
-          role: 'admin',
-          userType: 'city_official'
-        };
-        
-        localStorage.setItem('user', JSON.stringify(adminUser));
-        console.log('✅ Admin demo created, redirecting to /admin');
-        setSuccess('Admin demo account created! Redirecting...');
-        
-        // FORCE REDIRECT with window.location
-        setTimeout(() => {
+      // ---------------------------------------------------------
+      // 2. GET USER ROLE FROM FIRESTORE
+      // Now that we know they are who they say they are, get their data
+      // ---------------------------------------------------------
+      const usersRef = collection(db, 'users');
+      const q = query(usersRef, where("email", "==", email));
+      const querySnapshot = await getDocs(q);
+
+      if (querySnapshot.empty) {
+        throw new Error('Login successful, but user data not found in database.');
+      }
+
+      // Get user data
+      const userDoc = querySnapshot.docs[0];
+      const userData = userDoc.data();
+      const userId = userDoc.id;
+
+      // Update last login
+      const updatedUser = {
+        ...userData,
+        lastLogin: new Date().toISOString(),
+        id: userId
+      };
+
+      // Store in localStorage
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      
+      console.log('✅ Login successful, redirecting to:', updatedUser.role === 'admin' ? '/admin' : '/user');
+      setSuccess('Login successful! Redirecting...');
+
+      // FORCE REDIRECT
+      setTimeout(() => {
+        if (updatedUser.role === 'admin') {
           window.location.href = '/admin';
-        }, 500);
-        return;
-      }
-      throw new Error('No account found with this email');
-    }
+        } else {
+          window.location.href = '/user';
+        }
+      }, 500);
 
-    // Get user data
-    const userDoc = querySnapshot.docs[0];
-    const userData = userDoc.data();
-    const userId = userDoc.id;
-
-    // Check password (simplified for demo)
-    if (!password) {
-      throw new Error('Password is required');
-    }
-
-    // Update last login
-    const updatedUser = {
-      ...userData,
-      lastLogin: new Date().toISOString(),
-      id: userId
-    };
-
-    // Store in localStorage
-    localStorage.setItem('user', JSON.stringify(updatedUser));
-    
-    console.log('✅ Login successful, redirecting to:', updatedUser.role === 'admin' ? '/admin' : '/user');
-    setSuccess('Login successful! Redirecting...');
-
-    // FORCE REDIRECT with window.location
-    setTimeout(() => {
-      if (updatedUser.role === 'admin') {
-        window.location.href = '/admin';
+    } catch (err) {
+      console.error('Login error:', err);
+      // Custom error messages
+      if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
+        setError('Incorrect email or password.');
+      } else if (err.code === 'auth/user-not-found') {
+        setError('No account found with this email.');
       } else {
-        window.location.href = '/user';
+        setError(err.message || 'Login failed. Please try again.');
       }
-    }, 500);
-
-  } catch (err) {
-    console.error('Login error:', err);
-    setError(err.message || 'Login failed. Please try again.');
-    setLoading(false);
-  }
-};
-  const handleAdminDemo = () => {
-  setEmail('admin@city.gov');
-  setPassword('admin123');
-  
-  // Auto-create admin user and redirect
-  const adminUser = {
-    id: 'demo-admin-' + Date.now(),
-    name: 'City Administrator',
-    email: 'admin@city.gov',
-    role: 'admin',
-    userType: 'city_official',
-    createdAt: new Date().toISOString()
+      setLoading(false);
+    }
   };
-  
-  localStorage.setItem('user', JSON.stringify(adminUser));
-  console.log('🚀 Admin demo login, redirecting to /admin');
-  
-  // Force redirect immediately
-  setTimeout(() => {
-    window.location.href = '/admin';
-  }, 100);
-};
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center p-4">
@@ -150,31 +106,7 @@ function Login() {
           </div>
         )}
 
-        {/* Admin Demo Button - KEEP THIS */}
-        <div className="mb-6">
-          <p className="text-center text-gray-500 text-sm mb-3">Quick Admin Demo:</p>
-          <button
-            onClick={handleAdminDemo}
-            className="w-full py-4 bg-gradient-to-r from-purple-100 to-purple-200 text-purple-800 rounded-lg font-medium hover:from-purple-200 hover:to-purple-300 transition-all shadow-sm border-2 border-purple-300"
-          >
-            <div className="flex items-center justify-center gap-3">
-              <FiShield className="text-xl" />
-              <div>
-                <div className="text-lg font-bold">City Administrator</div>
-                <div className="text-sm font-normal">Dashboard Access</div>
-              </div>
-            </div>
-            <div className="text-xs text-purple-600 mt-2">
-              Click to auto-login as City Official
-            </div>
-          </button>
-          <p className="text-xs text-center text-gray-500 mt-2">
-            Email: admin@city.gov | Password: admin123
-          </p>
-        </div>
-
-        <div className="border-t border-gray-200 pt-6">
-          <p className="text-center text-gray-500 text-sm mb-4">Or login manually:</p>
+        <div>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -262,4 +194,4 @@ function Login() {
   );
 }
 
-export default Login;   
+export default Login;

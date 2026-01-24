@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { userService } from '../services/firebaseService';
+import { auth, db } from '../firebase/config'; // Import auth and db
+import { createUserWithEmailAndPassword } from 'firebase/auth'; // Import Auth function
+import { doc, setDoc } from 'firebase/firestore'; // Import Firestore functions
 import { 
   FiUser, FiMail, FiPhone, FiMapPin, 
   FiLock, FiAlertCircle, FiCheck 
@@ -12,7 +14,7 @@ function Register() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   
-  // Form state - REMOVED userType, all users are citizens
+  // Form state
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -80,67 +82,60 @@ function Register() {
     setLoading(true);
 
     try {
-      // Prepare user data - ALL USERS ARE CITIZENS
+      console.log('📝 Starting Registration for:', formData.email);
+
+      // 1. CREATE USER IN FIREBASE AUTHENTICATION
+      // This is the step that makes them appear in the "Authentication" tab
+      const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
+      const user = userCredential.user;
+      
+      console.log('✅ Auth Account Created! UID:', user.uid);
+
+      // 2. PREPARE DATABASE DATA
+      // We do NOT store the password in the database for security
       const userData = {
+        uid: user.uid, // Important: Store the Auth UID
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
         address: formData.address,
         city: formData.city,
         pincode: formData.pincode,
-        userType: 'citizen', // Fixed as citizen
-        role: 'user', // Fixed as user role
+        userType: 'citizen',
+        role: 'user', 
         createdAt: new Date().toISOString(),
         status: 'active',
         reportsCount: 0,
-        lastLogin: null
+        lastLogin: new Date().toISOString()
       };
 
-      console.log('📝 Attempting to save user:', userData);
+      // 3. SAVE TO FIRESTORE DATABASE
+      // We use setDoc with user.uid so the Auth ID and Database ID are the same
+      await setDoc(doc(db, "users", user.uid), userData);
+      
+      console.log('✅ User Profile Saved to Firestore');
+      
+      // 4. SAVE TO LOCAL STORAGE (For the session)
+      localStorage.setItem('user', JSON.stringify(userData));
 
-      // Try to save to Firestore
-      try {
-        // Save to Firestore
-        const savedUser = await userService.createUser(userData);
-        
-        console.log('✅ User registered with ID:', savedUser.id);
-        
-        // Store in localStorage for session
-        localStorage.setItem('user', JSON.stringify({
-          id: savedUser.id,
-          ...userData
-        }));
+      setSuccess('Registration successful! Redirecting to dashboard...');
 
-        setSuccess('Registration successful! Welcome to CivicFix.');
-
-        // Redirect to user dashboard (ALWAYS user, never admin)
-        setTimeout(() => {
-          window.location.href = '/user';
-        }, 1500);
-
-      } catch (firebaseError) {
-        // If Firebase fails, use localStorage as fallback
-        console.warn('⚠️ Firebase save failed, using localStorage fallback:', firebaseError);
-        
-        // Create a mock user ID
-        const mockUserId = 'local-' + Date.now();
-        
-        localStorage.setItem('user', JSON.stringify({
-          id: mockUserId,
-          ...userData,
-          isLocal: true // Flag to indicate this is local storage
-        }));
-
-        setSuccess('Registration successful! (Using local storage)');
-
-        setTimeout(() => {
-          window.location.href = '/user';
-        }, 1500);
-      }
+      // Redirect to user dashboard
+      setTimeout(() => {
+        window.location.href = '/user';
+      }, 1500);
 
     } catch (err) {
       console.error('❌ Registration error:', err);
-      setError(err.message || 'Registration failed. Please try again.');
+      
+      // Handle specific Firebase errors
+      if (err.code === 'auth/email-already-in-use') {
+        setError('This email is already registered. Please login instead.');
+      } else if (err.code === 'auth/weak-password') {
+        setError('Password should be at least 6 characters.');
+      } else {
+        setError(err.message || 'Registration failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -184,9 +179,6 @@ function Register() {
                 </p>
               </div>
             </div>
-            <p className="text-sm text-gray-500 mt-4">
-              <strong>Note:</strong> Admin accounts are created separately by city administrators.
-            </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -383,20 +375,10 @@ function Register() {
               </div>
             </div>
           </div>
-
-          {/* Firebase Status */}
-          <div className="mt-8 p-4 bg-gray-100 rounded-lg">
-            <p className="text-sm text-gray-600">
-              <strong>Note:</strong> Your data will be securely stored in Firebase Firestore.
-              <br />
-              <span className="text-xs">Collection: "users" • Role: "user" (Citizen)</span>
-            </p>
-          </div>
         </div>
       </div>
     </div>
   );
 }
 
-// ⭐⭐⭐ ADD THIS LINE - DEFAULT EXPORT ⭐⭐⭐
 export default Register;
