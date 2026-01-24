@@ -125,7 +125,7 @@ const UserApp = () => {
       // ⭐ SEND USER ID FOR RATE LIMITING
       fd.append('user_id', userDetails?.id || userDetails?.uid || 'anonymous');
       
-      const res = await fetch('https://civicfix-hackfest.onrender.com', { method: 'POST', body: fd });
+      const res = await fetch('https://civicfix-hackfest.onrender.com/analyze-image', { method: 'POST', body: fd });
       
       // ⭐ HANDLE RATE LIMIT ERROR (429)
       if (res.status === 429) {
