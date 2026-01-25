@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { auth, db } from '../firebase/config'; // Import auth and db
-import { createUserWithEmailAndPassword } from 'firebase/auth'; // Import Auth function
-import { doc, setDoc } from 'firebase/firestore'; // Import Firestore functions
+import { auth, db } from '../firebase/config';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
 import { 
   FiUser, FiMail, FiPhone, FiMapPin, 
   FiLock, FiAlertCircle, FiCheck 
@@ -14,7 +14,6 @@ function Register() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   
-  // Form state
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -35,38 +34,14 @@ function Register() {
   };
 
   const validateForm = () => {
-    if (!formData.name.trim()) {
-      setError('Name is required');
-      return false;
-    }
-    if (!formData.email.trim()) {
-      setError('Email is required');
-      return false;
-    }
-    if (!/^\S+@\S+\.\S+$/.test(formData.email)) {
-      setError('Invalid email format');
-      return false;
-    }
-    if (!formData.phone.trim()) {
-      setError('Phone number is required');
-      return false;
-    }
-    if (formData.phone.length < 10) {
-      setError('Phone number must be at least 10 digits');
-      return false;
-    }
-    if (!formData.password) {
-      setError('Password is required');
-      return false;
-    }
-    if (formData.password.length < 6) {
-      setError('Password must be at least 6 characters');
-      return false;
-    }
-    if (formData.password !== formData.confirmPassword) {
-      setError('Passwords do not match');
-      return false;
-    }
+    if (!formData.name.trim()) { setError('Name is required'); return false; }
+    if (!formData.email.trim()) { setError('Email is required'); return false; }
+    if (!/^\S+@\S+\.\S+$/.test(formData.email)) { setError('Invalid email format'); return false; }
+    if (!formData.phone.trim()) { setError('Phone number is required'); return false; }
+    if (formData.phone.length < 10) { setError('Phone number must be at least 10 digits'); return false; }
+    if (!formData.password) { setError('Password is required'); return false; }
+    if (formData.password.length < 6) { setError('Password must be at least 6 characters'); return false; }
+    if (formData.password !== formData.confirmPassword) { setError('Passwords do not match'); return false; }
     return true;
   };
 
@@ -75,26 +50,19 @@ function Register() {
     setError('');
     setSuccess('');
 
-    if (!validateForm()) {
-      return;
-    }
+    if (!validateForm()) return;
 
     setLoading(true);
 
     try {
-      console.log('📝 Starting Registration for:', formData.email);
-
       // 1. CREATE USER IN FIREBASE AUTHENTICATION
-      // This is the step that makes them appear in the "Authentication" tab
       const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
       const user = userCredential.user;
-      
-      console.log('✅ Auth Account Created! UID:', user.uid);
 
       // 2. PREPARE DATABASE DATA
-      // We do NOT store the password in the database for security
       const userData = {
-        uid: user.uid, // Important: Store the Auth UID
+        uid: user.uid, // ⭐ CRITICAL for Rate Limiting
+        id: user.uid,
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
@@ -110,25 +78,22 @@ function Register() {
       };
 
       // 3. SAVE TO FIRESTORE DATABASE
-      // We use setDoc with user.uid so the Auth ID and Database ID are the same
       await setDoc(doc(db, "users", user.uid), userData);
       
-      console.log('✅ User Profile Saved to Firestore');
-      
-      // 4. SAVE TO LOCAL STORAGE (For the session)
+      // 4. CLEANUP OLD SESSION & SAVE NEW ONE
+      localStorage.clear(); 
       localStorage.setItem('user', JSON.stringify(userData));
 
       setSuccess('Registration successful! Redirecting to dashboard...');
 
-      // Redirect to user dashboard
+      // 5. SMOOTH REDIRECT
       setTimeout(() => {
-        window.location.href = '/user';
+        navigate('/user');
       }, 1500);
 
     } catch (err) {
       console.error('❌ Registration error:', err);
       
-      // Handle specific Firebase errors
       if (err.code === 'auth/email-already-in-use') {
         setError('This email is already registered. Please login instead.');
       } else if (err.code === 'auth/weak-password') {
@@ -354,7 +319,7 @@ function Register() {
             </div>
           </form>
 
-          {/* Benefits Section */}
+          {/* Benefits Section - RESTORED */}
           <div className="mt-8 p-6 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-blue-200">
             <h3 className="text-lg font-bold text-gray-800 mb-4">Benefits of Citizen Account:</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -375,6 +340,7 @@ function Register() {
               </div>
             </div>
           </div>
+          
         </div>
       </div>
     </div>

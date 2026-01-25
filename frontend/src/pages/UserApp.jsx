@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { FiCamera, FiUpload, FiMapPin, FiX, FiRefreshCw, FiActivity, FiCheckCircle, FiAlertTriangle, FiAlertCircle } from 'react-icons/fi';
 import { reportService, userService } from '../services/firebaseService';
-import { doc, getDoc } from 'firebase/firestore'; 
-import { db } from '../firebase/config'; 
+import { auth, db } from '../firebase/config';
+// ⭐ FIXED: Consolidated imports
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth'; 
 
 const UserApp = () => {
   const [image, setImage] = useState(null);
@@ -14,16 +16,47 @@ const UserApp = () => {
   const [stream, setStream] = useState(null);
   const [userDetails, setUserDetails] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [errorMsg, setErrorMsg] = useState(null); // ⭐ NEW: State for error messages
+  const [errorMsg, setErrorMsg] = useState(null);
+  
+  // ⭐ FIXED: Added missing state variable
+  const [verifiedUserId, setVerifiedUserId] = useState(null);
   
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
   const canvasRef = useRef(null);
 
-  // --- 1. DATA SYNC ---
+  // --- 1. DATA SYNC & AUTH ---
+  useEffect(() => {
+    const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
+    setUserDetails(storedUser);
+    
+    // ⭐ FIXED: Added Auth Listener to populate verifiedUserId
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        console.log("🔥 Firebase Auth Verified:", user.uid);
+        setVerifiedUserId(user.uid);
+        
+        // Fix LocalStorage if needed
+        if (!storedUser.uid) {
+           const updated = { ...storedUser, uid: user.uid, id: user.uid, email: user.email };
+           setUserDetails(updated);
+           localStorage.setItem('user', JSON.stringify(updated));
+        }
+      }
+    });
+
+    fetchFreshUserData(); 
+    handleGetLocation(); 
+    
+    return () => {
+        stopCamera();
+        unsubscribe(); // Clean up listener
+    };
+  }, []);
+
   const fetchFreshUserData = async () => {
     const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
-    const userId = storedUser.uid || storedUser.id;
+    const userId = storedUser.uid || storedUser.id || auth.currentUser?.uid;
 
     if (userId) {
       try {
@@ -40,15 +73,18 @@ const UserApp = () => {
 
   const handleGetLocation = () => {
     if (!navigator.geolocation) return alert("Geolocation not supported.");
-    setLocation({ lat: 0, lng: 0, address: "Locating..." });
+    
+    setLocation(prev => prev ? { ...prev, address: "Updating location..." } : { lat: 0, lng: 0, address: "Locating..." });
 
     navigator.geolocation.getCurrentPosition(async (pos) => {
       const { latitude, longitude } = pos.coords;
       try {
         const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
         const data = await res.json();
+        
         const fullAddress = data.display_name || "Address Found";
-        const city = data.address?.city || "Unknown City";
+        const addr = data.address || {};
+        const city = addr.city || addr.town || addr.village || addr.municipality || addr.county || addr.state_district || "Unknown Location";
 
         setLocation({ lat: latitude, lng: longitude, address: fullAddress });
         
@@ -59,20 +95,14 @@ const UserApp = () => {
         if (userDetails?.uid || userDetails?.id) {
           userService.updateUser(userDetails.uid || userDetails.id, { city, address: fullAddress });
         }
-      } catch (e) { setLocation({ lat: latitude, lng: longitude, address: "Address lookup failed" }); }
+      } catch (e) { 
+          console.error(e);
+          setLocation({ lat: latitude, lng: longitude, address: "Address lookup failed" }); 
+      }
     }, (err) => {
         alert("GPS Access Denied. Please enable location.");
-        setLocation(null);
     });
   };
-
-  useEffect(() => {
-    const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
-    setUserDetails(storedUser);
-    fetchFreshUserData(); 
-    handleGetLocation(); 
-    return () => stopCamera();
-  }, []);
 
   // --- 2. CAMERA ---
   useEffect(() => { if (useCamera) startCamera(); else stopCamera(); }, [useCamera]);
@@ -109,8 +139,16 @@ const UserApp = () => {
     }
   };
 
-  // --- 3. ANALYSIS (Updated with Rate Limit Handling) ---
+  // --- 3. ANALYSIS ---
   const handleAnalyze = async () => {
+    const finalUserId = verifiedUserId || userDetails?.id || userDetails?.uid || auth.currentUser?.uid;
+
+    if (!finalUserId) {
+        console.error("❌ CRITICAL: No User ID found.");
+        alert("Login Error: We cannot verify your identity. Please Logout and Login again.");
+        return; 
+    }
+
     if (!imageFile) return;
     if (!location || location.address === "Locating...") { alert("Wait for location..."); return; }
 
@@ -118,19 +156,43 @@ const UserApp = () => {
     setErrorMsg(null);
 
     try {
+      // ⭐ FRONTEND RATE LIMIT CHECK
+      const todayPrefix = new Date().toISOString().split('T')[0];
+
+      const q = query(
+        collection(db, "reports"), 
+        where("userId", "==", finalUserId)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      
+      let dailyCount = 0;
+      querySnapshot.forEach((doc) => {
+         const data = doc.data();
+         if (data.timestamp && data.timestamp.startsWith(todayPrefix)) {
+             dailyCount++;
+         }
+      });
+
+      console.log(`📊 Daily Report Count: ${dailyCount}/5`);
+
+      if (dailyCount >= 5) {
+          setErrorMsg(`Daily limit reached (${dailyCount}/5). Please try again tomorrow.`);
+          setLoading(false);
+          return;
+      }
+
       const fd = new FormData();
       fd.append('file', imageFile);
       fd.append('latitude', location.lat);
       fd.append('longitude', location.lng);
-      // ⭐ SEND USER ID FOR RATE LIMITING
-      fd.append('user_id', userDetails?.id || userDetails?.uid || 'anonymous');
+      fd.append('user_id', finalUserId);
       
-      const res = await fetch('https://civicfix-hackfest.onrender.com', { method: 'POST', body: fd });
+      const res = await fetch('https://civicfix-hackfest.onrender.com/analyze-image', { method: 'POST', body: fd });
       
-      // ⭐ HANDLE RATE LIMIT ERROR (429)
       if (res.status === 429) {
           const errData = await res.json();
-          setErrorMsg(errData.detail || "Daily report limit reached (5/5).");
+          setErrorMsg(errData.detail || "Daily report limit reached.");
           setLoading(false);
           return;
       }
@@ -139,18 +201,20 @@ const UserApp = () => {
       
       if (data.status === 'success' || data.data) {
         const rawData = data.data || {};
-        
+        const serverImageUrl = data.image_url || null; 
+
         const analysis = {
             issue_detected: rawData.issue_detected ?? true, 
             type: rawData.type || "General Issue",
             severity_score: rawData.severity_score || 5,
             recommended_action: rawData.recommended_action || "Inspection Required",
             danger_reason: rawData.danger_reason || "Potential hazard detected",
-            location: location 
+            location: location,
+            imageUrl: serverImageUrl 
         };
 
         setResult(analysis);
-        await saveReport(analysis);
+        await saveReport(analysis, finalUserId); // Pass ID explicitly
 
       } else {
           throw new Error("Invalid AI Response");
@@ -163,10 +227,10 @@ const UserApp = () => {
     }
   };
 
-  const saveReport = async (data) => {
+  const saveReport = async (data, explicitUserId) => {
     setSaving(true);
     try {
-      const userId = userDetails?.uid || userDetails?.id;
+      const userId = explicitUserId || userDetails?.uid || userDetails?.id;
       
       const reportPayload = {
         type: data.type || "Unknown",
@@ -198,7 +262,6 @@ const UserApp = () => {
 
     } catch (e) { 
         console.error("Firebase Save Error:", e); 
-        // Don't show error to user if AI worked but save failed slightly
     } finally { 
         setSaving(false); 
     }
@@ -243,7 +306,6 @@ const UserApp = () => {
           Report Issue
         </h2>
 
-        {/* ⭐ NEW: Error Message Display */}
         {errorMsg && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl mb-6 flex items-center gap-2 animate-bounce">
                 <FiAlertCircle className="text-xl" />
@@ -277,7 +339,7 @@ const UserApp = () => {
           </div>
         ) : null}
 
-        {/* LOADING: SCI-FI SCANNER EFFECT */}
+        {/* LOADING */}
         {loading && image ? (
           <div className="scanner-container aspect-video mb-6">
             <img src={image} className="scanner-image" alt="Scanning..." />

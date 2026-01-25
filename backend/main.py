@@ -177,10 +177,10 @@ async def analyze_image(
             # ⭐ USE UTC DATE (matches Frontend's .toISOString())
             today_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             
-            # Simple Query: Get recent reports by this User
+            # Simple Query: Get ALL reports by this User
+            # ⭐ FIX: Removed .limit(50) so we count EVERYTHING from today correctly
             docs = db.collection("reports") \
                 .where("userId", "==", user_id) \
-                .limit(20) \
                 .stream()
             
             daily_count = 0

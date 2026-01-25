@@ -114,11 +114,3 @@ secrets.json
 firebase_credentials.json
 serviceAccountKey.json
 *serviceAccount*.json
-
-
-# ====================================
-# DEMO ASSETS (Optional - keep if you want)
-# ====================================
-# Uncomment if you want to ignore demo images
-# demo_assets/test*.jpg
-# demo_assets/*.png
