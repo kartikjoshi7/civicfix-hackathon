@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { signInWithEmailAndPassword } from 'firebase/auth'; // ⭐ Real Auth Import
+import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth'; // ⭐ Added reset import
 import { doc, getDoc } from 'firebase/firestore'; 
-import { auth, db } from '../firebase/config'; // ⭐ Import auth
+import { auth, db } from '../firebase/config';
 import { 
-  FiMail, FiLock, FiAlertCircle, FiCheck
+  FiMail, FiLock, FiAlertCircle, FiCheck, FiArrowLeft
 } from 'react-icons/fi';
 
 function Login() {
@@ -14,7 +14,9 @@ function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
+  const [isResetMode, setIsResetMode] = useState(false); // ⭐ Toggle for Reset Mode
 
+  // --- LOGIN LOGIC ---
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -22,36 +24,30 @@ function Login() {
     setLoading(true);
 
     try {
-      // 1. 🛡️ SECURITY CHECK: This forces Firebase to verify the password on the server
+      // 1. Authenticate
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
 
-      // 2. Fetch extra user details (like role/city) from Firestore
+      // 2. Fetch User Data
       const userRef = doc(db, 'users', firebaseUser.uid);
       const userSnap = await getDoc(userRef);
       
-      // Default data from Auth
       let userData = {
         uid: firebaseUser.uid,
         email: firebaseUser.email,
-        role: 'user' // Default role
+        role: 'user' 
       };
 
-      // Merge with Firestore data if it exists
       if (userSnap.exists()) {
         userData = { ...userData, ...userSnap.data(), id: firebaseUser.uid };
       }
 
-      // 3. 🧹 CLEANUP: This is CRITICAL for the Rate Limit bug.
-      // It wipes the old "userId" from the browser so the new user starts fresh.
+      // 3. Cleanup & Save Session
       localStorage.clear(); 
-      
-      // 4. Save FRESH user session
       localStorage.setItem('user', JSON.stringify(userData));
 
       setSuccess('Login successful! Redirecting...');
       
-      // 5. Redirect based on role
       setTimeout(() => {
         if (userData.role === 'admin') {
           navigate('/admin');
@@ -62,8 +58,6 @@ function Login() {
 
     } catch (err) {
       console.error('Login error:', err);
-      
-      // Handle specific Firebase errors for better UX
       if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
         setError('Invalid email or password.');
       } else if (err.code === 'auth/user-not-found') {
@@ -77,6 +71,34 @@ function Login() {
     }
   };
 
+  // --- ⭐ PASSWORD RESET LOGIC ---
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    if (!email) {
+        setError("Please enter your email address.");
+        return;
+    }
+
+    setError('');
+    setSuccess('');
+    setLoading(true);
+
+    try {
+        await sendPasswordResetEmail(auth, email);
+        setSuccess("Reset link sent! Please check your inbox (and spam folder).");
+        setIsResetMode(false); // Switch back to login so they can sign in after resetting
+    } catch (err) {
+        console.error("Reset Error:", err);
+        if (err.code === 'auth/user-not-found') {
+            setError("No account found with this email.");
+        } else {
+            setError("Failed to send reset link. Try again.");
+        }
+    } finally {
+        setLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-8">
@@ -84,8 +106,12 @@ function Login() {
           <div className="inline-block p-3 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl mb-4">
             <span className="text-3xl text-white">🏙️</span>
           </div>
-          <h1 className="text-3xl font-bold text-gray-800">CivicFix Login</h1>
-          <p className="text-gray-600 mt-2">Access the infrastructure management system</p>
+          <h1 className="text-3xl font-bold text-gray-800">
+            {isResetMode ? 'Reset Password' : 'CivicFix Login'}
+          </h1>
+          <p className="text-gray-600 mt-2">
+            {isResetMode ? 'Enter your email to receive a recovery link' : 'Access the infrastructure management system'}
+          </p>
         </div>
 
         {error && (
@@ -103,7 +129,9 @@ function Login() {
         )}
         
         <div className="border-t border-gray-200 pt-6">
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={isResetMode ? handleResetPassword : handleSubmit} className="space-y-4">
+            
+            {/* Email Field (Always Visible) */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <FiMail className="inline mr-2" />
@@ -119,59 +147,85 @@ function Login() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <FiLock className="inline mr-2" />
-                Password
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                placeholder="Enter your password"
-                required
-              />
-            </div>
+            {/* Password Field (Hidden in Reset Mode) */}
+            {!isResetMode && (
+                <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <FiLock className="inline mr-2" />
+                    Password
+                </label>
+                <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                    placeholder="Enter your password"
+                    required
+                />
+                </div>
+            )}
 
-            <div className="flex items-center justify-between">
-              <label className="flex items-center">
-                <input type="checkbox" className="mr-2" />
-                <span className="text-sm text-gray-600">Remember me</span>
-              </label>
-              <a href="#" className="text-sm text-blue-600 hover:underline">
-                Forgot password?
-              </a>
-            </div>
+            {/* Links Row */}
+            {!isResetMode && (
+                <div className="flex items-center justify-between">
+                <label className="flex items-center">
+                    <input type="checkbox" className="mr-2" />
+                    <span className="text-sm text-gray-600">Remember me</span>
+                </label>
+                <button 
+                    type="button"
+                    onClick={() => { setIsResetMode(true); setError(''); setSuccess(''); }}
+                    className="text-sm text-blue-600 hover:underline bg-transparent border-none cursor-pointer"
+                >
+                    Forgot password?
+                </button>
+                </div>
+            )}
 
+            {/* Submit Button */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg"
+              className={`w-full py-3 text-white rounded-lg font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg ${isResetMode ? 'bg-gray-800' : 'bg-gradient-to-r from-blue-600 to-purple-600'}`}
             >
               {loading ? (
                 <span className="flex items-center justify-center">
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-3"></div>
-                  Logging in...
+                  Processing...
                 </span>
               ) : (
-                'Login to CivicFix'
+                isResetMode ? 'Send Reset Link' : 'Login to CivicFix'
               )}
             </button>
+
+            {/* Back Button (Only in Reset Mode) */}
+            {isResetMode && (
+                <button 
+                    type="button"
+                    onClick={() => { setIsResetMode(false); setError(''); setSuccess(''); }}
+                    className="w-full py-3 text-gray-500 font-bold hover:text-gray-800 flex items-center justify-center gap-2"
+                >
+                    <FiArrowLeft /> Back to Login
+                </button>
+            )}
+
           </form>
         </div>
 
-        <div className="mt-8 text-center">
-          <p className="text-gray-600">
-            Don't have an account?
-            <Link
-              to="/register"
-              className="ml-2 text-blue-600 hover:text-blue-800 font-medium"
-            >
-              Create Citizen Account
-            </Link>
-          </p>
-        </div>
+        {/* Create Account Link (Hidden in Reset Mode) */}
+        {!isResetMode && (
+            <div className="mt-8 text-center">
+            <p className="text-gray-600">
+                Don't have an account?
+                <Link
+                to="/register"
+                className="ml-2 text-blue-600 hover:text-blue-800 font-medium"
+                >
+                Create Citizen Account
+                </Link>
+            </p>
+            </div>
+        )}
 
         <div className="mt-6 pt-6 border-t border-gray-200">
           <div className="text-center">
