@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react'; // ⭐ Added useRef
 import { Link, useNavigate } from 'react-router-dom';
-import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth'; // ⭐ Added reset import
+import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore'; 
 import { auth, db } from '../firebase/config';
+import ReCAPTCHA from "react-google-recaptcha"; // ⭐ Import CAPTCHA
 import { 
   FiMail, FiLock, FiAlertCircle, FiCheck, FiArrowLeft
 } from 'react-icons/fi';
@@ -14,21 +15,39 @@ function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
-  const [isResetMode, setIsResetMode] = useState(false); // ⭐ Toggle for Reset Mode
+  const [isResetMode, setIsResetMode] = useState(false);
+  
+  // ⭐ CAPTCHA STATE
+  const [captchaVerified, setCaptchaVerified] = useState(false);
+  const recaptchaRef = useRef(null);
 
-  // --- LOGIN LOGIC ---
+  // ⭐ REPLACE THIS WITH YOUR REAL SITE KEY FROM GOOGLE!
+  // This is a public test key that ONLY works on localhost.
+  const TEST_SITE_KEY = "6Ld6tVUsAAAAAOKX6TpW-lEUFxTDvbVLgN83my1o"; 
+
+  const handleCaptchaChange = (value) => {
+    console.log("Captcha value:", value);
+    // If value is not null, the user passed the test
+    setCaptchaVerified(!!value);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // ⭐ SECURITY CHECK
+    if (!captchaVerified && !isResetMode) {
+        setError("Please verify that you are not a robot.");
+        return;
+    }
+
     setError('');
     setSuccess('');
     setLoading(true);
 
     try {
-      // 1. Authenticate
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
 
-      // 2. Fetch User Data
       const userRef = doc(db, 'users', firebaseUser.uid);
       const userSnap = await getDoc(userRef);
       
@@ -42,7 +61,6 @@ function Login() {
         userData = { ...userData, ...userSnap.data(), id: firebaseUser.uid };
       }
 
-      // 3. Cleanup & Save Session
       localStorage.clear(); 
       localStorage.setItem('user', JSON.stringify(userData));
 
@@ -58,6 +76,10 @@ function Login() {
 
     } catch (err) {
       console.error('Login error:', err);
+      // Reset CAPTCHA on error so they have to verify again (Security Best Practice)
+      if (recaptchaRef.current) recaptchaRef.current.reset();
+      setCaptchaVerified(false);
+
       if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
         setError('Invalid email or password.');
       } else if (err.code === 'auth/user-not-found') {
@@ -71,7 +93,6 @@ function Login() {
     }
   };
 
-  // --- ⭐ PASSWORD RESET LOGIC ---
   const handleResetPassword = async (e) => {
     e.preventDefault();
     if (!email) {
@@ -79,6 +100,7 @@ function Login() {
         return;
     }
 
+    // (Optional) You can enforce CAPTCHA for resets too, but for UX we often skip it here
     setError('');
     setSuccess('');
     setLoading(true);
@@ -86,7 +108,7 @@ function Login() {
     try {
         await sendPasswordResetEmail(auth, email);
         setSuccess("Reset link sent! Please check your inbox (and spam folder).");
-        setIsResetMode(false); // Switch back to login so they can sign in after resetting
+        setIsResetMode(false); 
     } catch (err) {
         console.error("Reset Error:", err);
         if (err.code === 'auth/user-not-found') {
@@ -115,7 +137,7 @@ function Login() {
         </div>
 
         {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3 animate-pulse">
             <FiAlertCircle className="text-red-500 text-xl mt-0.5" />
             <p className="text-red-700 text-sm">{error}</p>
           </div>
@@ -131,7 +153,6 @@ function Login() {
         <div className="border-t border-gray-200 pt-6">
           <form onSubmit={isResetMode ? handleResetPassword : handleSubmit} className="space-y-4">
             
-            {/* Email Field (Always Visible) */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <FiMail className="inline mr-2" />
@@ -147,7 +168,6 @@ function Login() {
               />
             </div>
 
-            {/* Password Field (Hidden in Reset Mode) */}
             {!isResetMode && (
                 <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -165,7 +185,17 @@ function Login() {
                 </div>
             )}
 
-            {/* Links Row */}
+            {/* ⭐ CAPTCHA WIDGET (Only show in Login Mode) */}
+            {!isResetMode && (
+                <div className="flex justify-center py-2">
+                    <ReCAPTCHA
+                        ref={recaptchaRef}
+                        sitekey={TEST_SITE_KEY} // ⚠️ REPLACE FOR PRODUCTION
+                        onChange={handleCaptchaChange}
+                    />
+                </div>
+            )}
+
             {!isResetMode && (
                 <div className="flex items-center justify-between">
                 <label className="flex items-center">
@@ -182,11 +212,14 @@ function Login() {
                 </div>
             )}
 
-            {/* Submit Button */}
             <button
               type="submit"
-              disabled={loading}
-              className={`w-full py-3 text-white rounded-lg font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg ${isResetMode ? 'bg-gray-800' : 'bg-gradient-to-r from-blue-600 to-purple-600'}`}
+              disabled={loading || (!isResetMode && !captchaVerified)} // ⭐ Disable if captcha not checked
+              className={`w-full py-3 text-white rounded-lg font-medium transition-all shadow-lg flex items-center justify-center
+                ${(loading || (!isResetMode && !captchaVerified)) 
+                    ? 'bg-gray-400 cursor-not-allowed opacity-70' 
+                    : isResetMode ? 'bg-gray-800 hover:bg-black' : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:opacity-90'
+                }`}
             >
               {loading ? (
                 <span className="flex items-center justify-center">
@@ -198,7 +231,6 @@ function Login() {
               )}
             </button>
 
-            {/* Back Button (Only in Reset Mode) */}
             {isResetMode && (
                 <button 
                     type="button"
@@ -212,7 +244,6 @@ function Login() {
           </form>
         </div>
 
-        {/* Create Account Link (Hidden in Reset Mode) */}
         {!isResetMode && (
             <div className="mt-8 text-center">
             <p className="text-gray-600">
@@ -230,7 +261,7 @@ function Login() {
         <div className="mt-6 pt-6 border-t border-gray-200">
           <div className="text-center">
             <p className="text-xs text-gray-500">
-              Secured with Firebase Auth
+              Secured with Firebase Auth & reCAPTCHA
               <br />
               <span className="text-green-600">● Connected to Live System</span>
             </p>
