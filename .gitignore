@@ -114,3 +114,6 @@ secrets.json
 firebase_credentials.json
 serviceAccountKey.json
 *serviceAccount*.json
+
+# Local maintenance scripts
+frontend/clean-setup.bat

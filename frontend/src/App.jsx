@@ -1,22 +1,30 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 
-// Pages
-import Login from './pages/Login';
-import Register from './pages/Register';
-import UserApp from './pages/UserApp';
-import AdminDashboard from './pages/AdminDashboard';
-
-// Layouts - FIXED PATHS
+// Layouts - Keeping these static so the "Shell" loads instantly
 import UserLayout from './components/layout/UserLayout';
 import AdminLayout from './components/layout/AdminLayout';
 import Layout from './components/layout/Layout';
 
+// Lazy Load Pages (Code Splitting)
+const Login = lazy(() => import('./pages/Login'));
+const Register = lazy(() => import('./pages/Register'));
+const UserApp = lazy(() => import('./pages/UserApp'));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+
+// Reusable Loading Spinner Component
+const LoadingSpinner = () => (
+  <div className="min-h-screen flex items-center justify-center bg-gray-50">
+    <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent"></div>
+  </div>
+);
+
 function App() {
-  const [loading, setLoading] = useState(true);
-  
+  const [initialLoad, setInitialLoad] = useState(true);
+
+  // Simulating initial app check
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 500);
+    const timer = setTimeout(() => setInitialLoad(false), 500);
     return () => clearTimeout(timer);
   }, []);
 
@@ -36,47 +44,47 @@ function App() {
     return <Outlet />;
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent"></div>
-      </div>
-    );
+  // Show spinner only on the very first mount of the application
+  if (initialLoad) {
+    return <LoadingSpinner />;
   }
 
   return (
     <Router>
-      <Routes>
-        {/* PUBLIC ROUTES */}
-        <Route element={<Layout />}>
-          <Route path="/login" element={isLoggedIn() ? <Navigate to="/" /> : <Login />} />
-          <Route path="/register" element={isLoggedIn() ? <Navigate to="/" /> : <Register />} />
-        </Route>
-
-        {/* ROOT REDIRECT */}
-        <Route path="/" element={
-          isLoggedIn() 
-            ? <Navigate to={getRole() === 'admin' ? '/admin' : '/user'} replace /> 
-            : <Navigate to="/login" replace />
-        } />
-
-        {/* USER ROUTES */}
-        <Route element={<ProtectedRoute allowedRoles={['user']} />}>
-          <Route element={<UserLayout />}>
-            <Route path="/user" element={<UserApp />} />
+      {/* Suspense handles the loading state when switching pages (Lazy Loading) */}
+      <Suspense fallback={<LoadingSpinner />}>
+        <Routes>
+          {/* PUBLIC ROUTES */}
+          <Route element={<Layout />}>
+            <Route path="/login" element={isLoggedIn() ? <Navigate to="/" /> : <Login />} />
+            <Route path="/register" element={isLoggedIn() ? <Navigate to="/" /> : <Register />} />
           </Route>
-        </Route>
 
-        {/* ADMIN ROUTES */}
-        <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
-          <Route element={<AdminLayout />}>
-            <Route path="/admin" element={<AdminDashboard />} />
+          {/* ROOT REDIRECT */}
+          <Route path="/" element={
+            isLoggedIn() 
+              ? <Navigate to={getRole() === 'admin' ? '/admin' : '/user'} replace /> 
+              : <Navigate to="/login" replace />
+          } />
+
+          {/* USER ROUTES */}
+          <Route element={<ProtectedRoute allowedRoles={['user']} />}>
+            <Route element={<UserLayout />}>
+              <Route path="/user" element={<UserApp />} />
+            </Route>
           </Route>
-        </Route>
 
-        {/* Catch All */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+          {/* ADMIN ROUTES */}
+          <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
+            <Route element={<AdminLayout />}>
+              <Route path="/admin" element={<AdminDashboard />} />
+            </Route>
+          </Route>
+
+          {/* Catch All */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </Router>
   );
 }

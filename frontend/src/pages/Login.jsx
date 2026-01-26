@@ -126,7 +126,7 @@ function Login() {
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-8">
         <div className="text-center mb-8">
           <div className="inline-block p-3 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl mb-4">
-            <span className="text-3xl text-white">🏙️</span>
+            <img src="/logo.png" alt="CivicFix" className="h-12 w-12" />
           </div>
           <h1 className="text-3xl font-bold text-gray-800">
             {isResetMode ? 'Reset Password' : 'CivicFix Login'}
