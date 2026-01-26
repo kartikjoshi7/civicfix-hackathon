@@ -21,6 +21,7 @@ Our AI Engine (**Google Gemini 2.0**) instantly analyzes the image to:
 ## 🚀 Live Demo
 
 * **Live URL:** [https://civicfix-frontend-nykz.onrender.com](https://civicfix-frontend-nykz.onrender.com)
+* **Important:** ⚠️ First load may take 30–60s due to free hosting cold start.
 ---
 
 ## 🔐 Test Credentials
